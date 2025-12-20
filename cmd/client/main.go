@@ -19,6 +19,10 @@ func main() {
 	defer conn.Close()
 	fmt.Println("Client connected to RabbitMQ ...")
 	
+	publishCh, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("could not create channel: %v", err)
+	}
 	userName, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatalf("Clound could not be welcomed %v", err)
@@ -31,7 +35,28 @@ func main() {
 	}
 
 	gameState := gamelogic.NewGameState(userName)
+	err = pubsub.SubscribeJSON(
+		conn,routing.ExchangePerilTopic,
+		routing.ArmyMovesPrefix+"."+gameState.GetUsername(),
+		routing.ArmyMovesPrefix+".*",
+		pubsub.QueueTypeTransient,
+		handlerMove(gameState),
+	)
+	if err != nil {
+		log.Fatalf("could not subscribe to army moves: %v", err)
+	}
 
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilDirect,
+		queueName,
+		routing.PauseKey,
+		pubsub.QueueTypeTransient,
+		handlerPause(gameState),
+		)
+	if err != nil {
+		log.Fatalf("Could not subscribe %v", err)
+	}
 
 	for  {
 		userInput := gamelogic.GetInput()
@@ -42,15 +67,27 @@ func main() {
 		case "spawn":
 			err = gameState.CommandSpawn(userInput)	
 			if err != nil {
-				log.Fatalf("Could not execute spawn command %v", err)
+				fmt.Println(err)
 				continue
 			}
 		case "move":
-			_, err = gameState.CommandMove(userInput)
+			mv, err := gameState.CommandMove(userInput)
 			if err != nil {
-				log.Fatalf("Client move failed %v", err)
+				fmt.Println(err)
+				continue
 			}
-			fmt.Println("user move successful")
+			err = pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilTopic,
+				routing.ArmyMovesPrefix+"."+mv.Player.Username,
+				mv,
+			)
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				continue
+			}
+			fmt.Printf("Moved %v units to %s\n", len(mv.Units), mv.ToLocation)
+
 		case "status":
 			gameState.CommandStatus()
 		case "help":
