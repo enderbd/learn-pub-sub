@@ -15,6 +15,14 @@ const (
 	QueueTypeTransient SimpleQueueType = "transient"
 )
 
+type Acktype int
+
+const (
+	Ack Acktype = iota
+	NackDiscard
+	NackRequeue
+	)
+
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	data, err := json.Marshal(val)
 	if err != nil {
@@ -47,8 +55,10 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName,	key string, queu
 		
 	}
 	
-
-	newQueue, err := newChann.QueueDeclare(queueName, durable, autoDelete, exclusive, false, nil)
+	args := amqp.Table{
+		"x-dead-letter-exchange": "peril_dlx",
+	}
+	newQueue, err := newChann.QueueDeclare(queueName, durable, autoDelete, exclusive, false, args)
 	if err != nil {
 		return nil, amqp.Queue{}, err
 	} 
@@ -61,7 +71,7 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName,	key string, queu
 	return newChann, newQueue, nil
 }
 
-func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T)) error {
+func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T) Acktype) error {
 	chann, _ , err := DeclareAndBind(conn, exchange, queueName, key, queueType)
 	if err != nil {
 		return err
@@ -80,12 +90,30 @@ func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string
 				continue
 			}
 
-			handler(msg)
+			ackType := handler(msg)
+			switch ackType {
+				case Ack:
+				    if err := d.Ack(false); err != nil {
+					log.Printf("failed to Ack message: %v", err)
+				    } else {
+					log.Println("Message Ack")
+				    }
 
-			if err = d.Ack(false); err != nil {
-				log.Println("failed to ack the message!")
-				continue
-			}
+				case NackDiscard:
+				    if err := d.Nack(false, false); err != nil {
+					log.Printf("failed to NackDiscard message: %v", err)
+				    } else {
+					log.Println("Message NackDiscard")
+				    }
+
+				case NackRequeue:
+				    if err := d.Nack(false, true); err != nil {
+					log.Printf("failed to NackRequeue message: %v", err)
+				    } else {
+					log.Println("Message NackRequeue")
+				    }
+				}
+
 		} 
 
 	} ()
