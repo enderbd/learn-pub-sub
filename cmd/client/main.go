@@ -40,7 +40,7 @@ func main() {
 		routing.ArmyMovesPrefix+"."+gameState.GetUsername(),
 		routing.ArmyMovesPrefix+".*",
 		pubsub.QueueTypeTransient,
-		handlerMove(gameState),
+		handlerMove(gameState, publishCh),
 	)
 	if err != nil {
 		log.Fatalf("could not subscribe to army moves: %v", err)
@@ -56,6 +56,19 @@ func main() {
 		)
 	if err != nil {
 		log.Fatalf("Could not subscribe %v", err)
+	}
+
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		"war",
+		routing.WarRecognitionsPrefix + ".*",
+		pubsub.QueueTypeDurable,
+		handlerWar(gameState),
+		)
+
+	if err != nil {
+		log.Fatalf("Could not subscribe the hanleWar %v", err)
 	}
 
 	for  {
