@@ -64,7 +64,7 @@ func main() {
 		"war",
 		routing.WarRecognitionsPrefix + ".*",
 		pubsub.QueueTypeDurable,
-		handlerWar(gameState),
+		handlerWar(gameState, publishCh),
 		)
 
 	if err != nil {
