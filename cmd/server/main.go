@@ -11,64 +11,71 @@ import (
 )
 
 func main() {
-	rabbitConnStr := "amqp://guest:guest@localhost:5672/"
-	conn, err := amqp.Dial(rabbitConnStr)
+	const rabbitConnString = "amqp://guest:guest@localhost:5672/"
+
+	conn, err := amqp.Dial(rabbitConnString)
 	if err != nil {
-		log.Fatalf("Server could not dial into RabbitMQL %v", err)
+		log.Fatalf("could not connect to RabbitMQ: %v", err)
 	}
 	defer conn.Close()
-	fmt.Println("Server connected to RabbitMQ ...")
+	fmt.Println("Peril game server connected to RabbitMQ!")
 
-	pauseResumeChannel, err := conn.Channel()
+	publishCh, err := conn.Channel()
 	if err != nil {
-		log.Fatalf("Server could not open a channel: %v", err)
+		log.Fatalf("could not create channel: %v", err)
 	}
 
-
-	_, _, err = pubsub.DeclareAndBind(conn, routing.ExchangePerilTopic, routing.GameLogSlug, "game_logs.*", pubsub.QueueTypeDurable )
+	err = pubsub.SubscribeGob(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable,
+		handlerLogs(),
+	)
 	if err != nil {
-		log.Fatalf("Server: could not declare and bind a queue %v", err)
+		log.Fatalf("could not starting consuming logs: %v", err)
 	}
 
 	gamelogic.PrintServerHelp()
-	run := true
-	for run {
-		userInput := gamelogic.GetInput()
-		if len(userInput) < 1 {
+
+	for {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
 			continue
 		}
-		switch userInput[0] {
+		switch words[0] {
 		case "pause":
+			fmt.Println("Publishing paused game state")
 			err = pubsub.PublishJSON(
-				pauseResumeChannel,
+				publishCh,
 				routing.ExchangePerilDirect,
 				routing.PauseKey,
 				routing.PlayingState{
 					IsPaused: true,
-				})
+				},
+			)
 			if err != nil {
-				log.Fatalf("Could not send the stop message %v", err)
+				log.Printf("could not publish time: %v", err)
 			}
-			fmt.Println("Pause message sent!")
 		case "resume":
+			fmt.Println("Publishing resumes game state")
 			err = pubsub.PublishJSON(
-				pauseResumeChannel,
+				publishCh,
 				routing.ExchangePerilDirect,
 				routing.PauseKey,
 				routing.PlayingState{
 					IsPaused: false,
-				})
+				},
+			)
 			if err != nil {
-				log.Fatalf("Could not send the resume message %v", err)
+				log.Printf("could not publish time: %v", err)
 			}
-			fmt.Println("Resume message sent!")
 		case "quit":
-			fmt.Println("Exiting the server!")
-			run = false
+			log.Println("goodbye")
+			return
 		default:
-			fmt.Printf("Unrecognized command %s\n", userInput[0])
+			fmt.Println("unknown command")
 		}
-
 	}
 }
-
